@@ -25,6 +25,7 @@ func dbConnect() (*sql.DB, error) {
 	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS users (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		name TEXT NOT NULL,
+		password TEXT NOT NULL,
 		email TEXT UNIQUE NOT NULL
 	)`)
 	if err != nil {
@@ -42,13 +43,21 @@ func dbConnect() (*sql.DB, error) {
 
 // Define a simple data model for our API
 type User struct {
-	ID    int    `json:"id"`
-	Name  string `json:"name"`
-	Email string `json:"email"`
+	ID       int    `json:"id"`
+	Name     string `json:"name"`
+	Username string `json:"username"`
+	Password string `json: "password"`
 }
 
 // Task represents a single task with its name and order.
 type Task struct {
+	Name        string `json:"name"`
+	Rank        int    `json:"rank"`
+	Description string `json:"description`
+	UserID      int    `json"userId"`
+}
+
+type TaskData struct {
 	Name     string `json:"name"`
 	getOrder int    `json:"order"`
 }
@@ -106,36 +115,6 @@ func rootHandler(c *gin.Context) {
 	}
 }
 
-func GetUsers(c *gin.Context) {
-	db, err := dbConnect()
-	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
-		return
-	}
-	defer db.Close()
-
-	// Query database for users and return as JSON response
-	rows, err := db.Query("SELECT id, name, email FROM users")
-	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
-		return
-	}
-	defer rows.Close()
-
-	var users []User
-	for rows.Next() {
-		var user User
-		if err := rows.Scan(&user.ID, &user.Name, &user.Email); err != nil {
-			c.JSON(500, gin.H{"error": err.Error()})
-			return
-		}
-		users = append(users, user)
-	}
-
-	// Return users as JSON response
-	c.JSON(200, users)
-}
-
 func AddUser(c *gin.Context) {
 	db, err := dbConnect()
 	if err != nil {
@@ -163,7 +142,7 @@ func AddUser(c *gin.Context) {
 	c.JSON(201, gin.H{"id": lastID, "message": "User created successfully"})
 }
 
-func getTasks(w http.ResponseWriter, r *http.Request) {
+func GetTasks(w http.ResponseWriter, r *http.Request) {
 	ctx := context.Background()
 	tasks, err := manager.Tasks(ctx)
 	if err != nil {
@@ -173,7 +152,7 @@ func getTasks(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(tasks)
 }
 
-func addTask(w http.ResponseWriter, r *http.Request) {
+func AddTask(w http.ResponseWriter, r *http.Request) {
 	var data TaskData
 	err := jsonnet.NewJSONLoader().Load(r.Body, &data)
 	if err != nil {
@@ -203,9 +182,4 @@ func addTask(w http.ResponseWriter, r *http.Request) {
 	// add a Pomodoro timer feature
 
 	fmt.Fprint(w, "Task added successfully!")
-}
-
-type TaskData struct {
-	Name     string `json:"name"`
-	getOrder int    `json:"order"`
 }
