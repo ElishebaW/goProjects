@@ -1,0 +1,25 @@
+func createDatabase() error {
+	db, err := sql.Open("sqlite3", "./database.db")
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	_, err = db.Exec(`
+        CREATE TABLE IF NOT EXISTS users (
+            id TEXT PRIMARY KEY,
+            username TEXT,
+            password TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS articles (
+            id TEXT PRIMARY KEY,
+            title TEXT,
+            body TEXT,
+            author_id TEXT,
+            FOREIGN KEY (author_id) REFERENCES users(id)
+        );
+    `)
+
+	return err
+}

@@ -1,185 +1,199 @@
 package main
 
 import (
-	"context"
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"strings"
+	"time"
 
+	"github.com/dgrijalva/jwt-go"
 	"github.com/gin-gonic/gin"
-	_ "github.com/mattn/go-sqlite3" // Initialize the SQLite driver
+	_ "github.com/mattn/go-sqlite3"
 )
 
-// Create a new database connection function
-func dbConnect() (*sql.DB, error) {
-	dsn := "./db.sqlite3"
-	db, err := sql.Open("sqlite3", dsn)
-	if err != nil {
-		return nil, fmt.Errorf("error opening database: %v", err)
-	}
-
-	// Create users table if not exists
-	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS users (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		name TEXT NOT NULL,
-		password TEXT NOT NULL,
-		email TEXT UNIQUE NOT NULL
-	)`)
-	if err != nil {
-		return nil, fmt.Errorf("error creating users table: %v", err)
-	}
-
-	err = db.Ping()
-	if err != nil {
-		return nil, fmt.Errorf("error pinging database: %v", err)
-	}
-
-	fmt.Println("Successfully connected to the database!")
-	return db, nil
-}
-
-// Define a simple data model for our API
+// User represents a user in the system
 type User struct {
 	ID       int    `json:"id"`
-	Name     string `json:"name"`
 	Username string `json:"username"`
-	Password string `json: "password"`
+	Password string `json:"password"`
 }
 
-// Task represents a single task with its name and order.
+// Task represents a single task
 type Task struct {
+	ID          int    `json:"id"`
 	Name        string `json:"name"`
-	Rank        int    `json:"rank"`
-	Description string `json:"description`
-	UserID      int    `json"userId"`
+	Order       int    `json:"order"`
+	Description string `json:"description"`
+	UserID      int    `json:"user_id"`
 }
 
-type TaskData struct {
-	Name     string `json:"name"`
-	getOrder int    `json:"order"`
+// Secret key for JWT signing
+var jwtSecret = []byte("secret")
+
+// Database connection helper
+func dbConnect() (*sql.DB, error) {
+	return sql.Open("sqlite3", "./pomodoro.db")
 }
 
-func (t *Task) String() string {
-	return fmt.Sprintf("Task %d: %s", t.getOrder(), t.Name)
-}
-
-var tasks = []Task{
-	{"Work on task 1", 0},
-	{"Work on task 2", 1},
-	{"Work on task 3", 2},
-	{"Take a break", 3},
-	{"Work on task 4", 4},
-	{"Work on task 5", 5},
-}
-
-func (ts *TaskManager) TasksList() []Task {
-	return tasks
-}
-
-type TaskManager struct {
-	Tasks []Task `json:"tasks"`
-}
-
-var manager = &TaskManager{}
-
-// Define routes and handlers for your API
-func main() {
-	router := gin.Default()
-
-	// Handle requests at the root path ("/")
-	router.GET("/", rootHandler)
-
-	api := router.Group("/api")
-	{
-		api.GET("/users", GetUsers)
-		api.POST("/user", AddUser)
-		api.POST("/addTask", AddTask)
+// Login handler to authenticate users and issue JWT tokens
+func handleLogin(c *gin.Context) {
+	var user User
+	if err := c.ShouldBindJSON(&user); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request payload"})
+		return
 	}
 
-	// Run the server on port 8080
-	if err := router.Run(":8080"); err != nil {
-		log.Fatalf("Error running server: %v", err)
+	// Validate user credentials (replace with your database logic)
+	if user.Username != "testuser" || user.Password != "password123" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid username or password"})
+		return
 	}
+
+	// Create JWT token
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"user_id":  user.ID,
+		"username": user.Username,
+		"exp":      time.Now().Add(time.Hour * 24).Unix(), // Token expires in 24 hours
+	})
+
+	tokenString, err := token.SignedString(jwtSecret)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate token"})
+		return
+	}
+
+	// Return the token
+	c.JSON(http.StatusOK, gin.H{"token": tokenString})
 }
 
-func rootHandler(c *gin.Context) {
-	c.String(200, "Welcome to my API server!")
-	if c.Request.URL.Path == "/" {
-		c.File("index.html")
-	} else if strings.HasPrefix(c.Request.URL.Path, "/static/") {
-		// Serve static files from /static/
-		c.File("./static" + c.Request.URL.Path)
+// Middleware to authenticate requests using JWT
+func authMiddleware(c *gin.Context) {
+	tokenString := c.GetHeader("Authorization")
+	if tokenString == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Missing token"})
+		c.Abort()
+		return
 	}
+
+	tokenString = strings.Replace(tokenString, "Bearer ", "", 1)
+
+	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method")
+		}
+		return jwtSecret, nil
+	})
+
+	if err != nil || !token.Valid {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token"})
+		c.Abort()
+		return
+	}
+
+	claims, ok := token.Claims.(jwt.MapClaims)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token claims"})
+		c.Abort()
+		return
+	}
+
+	userID, ok := claims["user_id"].(float64)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid user ID in token"})
+		c.Abort()
+		return
+	}
+
+	c.Set("user_id", int(userID))
+	c.Next()
 }
 
-func AddUser(c *gin.Context) {
+// AddTaskHandler handles adding a new task
+func AddTaskHandler(c *gin.Context) {
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
+	var task Task
+	if err := c.ShouldBindJSON(&task); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input"})
+		return
+	}
+	task.UserID = userID.(int)
+
 	db, err := dbConnect()
 	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database connection failed"})
 		return
 	}
 	defer db.Close()
 
-	// Assuming you're using JSON for user data (use BindJSON for structured data)
-	var user User
-	if err := c.ShouldBindJSON(&user); err != nil {
-		c.JSON(400, gin.H{"error": "Invalid input"})
-		return
-	}
-
-	// Insert user into database and return created status
-	result, err := db.Exec("INSERT INTO users (name, email) VALUES (?, ?)", user.Name, user.Email)
+	_, err = db.Exec("INSERT INTO tasks (name, `order`, description, user_id) VALUES (?, ?, ?, ?)",
+		task.Name, task.Order, task.Description, task.UserID)
 	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save task"})
 		return
 	}
 
-	// Optionally, get the last inserted ID
-	lastID, _ := result.LastInsertId()
-	c.JSON(201, gin.H{"id": lastID, "message": "User created successfully"})
-}
-
-func GetTasks(w http.ResponseWriter, r *http.Request) {
-	ctx := context.Background()
-	tasks, err := manager.Tasks(ctx)
+	rows, err := db.Query("SELECT id, name, `order`, description FROM tasks WHERE user_id = ?", task.UserID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch tasks"})
 		return
 	}
-	json.NewEncoder(w).Encode(tasks)
-}
+	defer rows.Close()
 
-func AddTask(w http.ResponseWriter, r *http.Request) {
-	var data TaskData
-	err := jsonnet.NewJSONLoader().Load(r.Body, &data)
+	var tasks []Task
+	for rows.Next() {
+		var t Task
+		if err := rows.Scan(&t.ID, &t.Name, &t.Order, &t.Description); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse tasks"})
+			return
+		}
+		tasks = append(tasks, t)
+	}
+
+	reorganizedTasks, err := reorganizeTasksWithLLM(tasks)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to reorganize tasks"})
 		return
 	}
 
-	name := data.Name
-	order := data.Order
-
-	// use your local LLM to determine the best task order
-	tasksList := manager.TasksList()
-	for i, t := range tasksList {
-		if t.Name == name {
-			tasksList[i].getOrder() = order
-			break
+	for _, t := range reorganizedTasks {
+		_, err := db.Exec("UPDATE tasks SET `order` = ? WHERE id = ?", t.Order, t.ID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update tasks"})
+			return
 		}
 	}
 
-	if err := jsonnet.NewJSONLoader().Load([]byte(`{
-                "tasks": ${tasksList}
-            }`), &TaskManager{Tasks: tasksList}); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+	c.JSON(http.StatusOK, gin.H{"message": "Task added and tasks reorganized successfully"})
+}
+
+// Simulate sending tasks to Llama 3.2 LLM for reorganization
+func reorganizeTasksWithLLM(tasks []Task) ([]Task, error) {
+	fmt.Println("Sending tasks to Llama 3.2 LLM for reorganization...")
+	for i := range tasks {
+		tasks[i].Order = i // Example: Reorganize tasks by their index
 	}
+	return tasks, nil
+}
 
-	// add a Pomodoro timer feature
+func main() {
+	router := gin.Default()
 
-	fmt.Fprint(w, "Task added successfully!")
+	// Public route
+	router.POST("/login", handleLogin)
+
+	// Protected routes
+	router.Use(authMiddleware)
+	router.POST("/tasks", AddTaskHandler)
+
+	// Start server
+	if err := router.Run(":8080"); err != nil {
+		log.Fatalf("Error starting server: %v", err)
+	}
 }
