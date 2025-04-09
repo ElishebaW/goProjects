@@ -1,7 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"database/sql"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -173,13 +176,45 @@ func AddTaskHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Task added and tasks reorganized successfully"})
 }
 
-// Simulate sending tasks to Llama 3.2 LLM for reorganization
+// Sending tasks to Llama 3.2 LLM for reorganization
 func reorganizeTasksWithLLM(tasks []Task) ([]Task, error) {
 	fmt.Println("Sending tasks to Llama 3.2 LLM for reorganization...")
-	for i := range tasks {
-		tasks[i].Order = i // Example: Reorganize tasks by their index
+
+	// Define the LLM chat endpoint
+	llmURL := "http://localhost:11434/chat"
+
+	// Prepare the chat message
+	message := map[string]interface{}{
+		"system": "You are a productivity assistant.",
+		"user":   "Here are my tasks. Please reorganize them for greater productivity. Return the tasks with updated order values.",
+		"tasks":  tasks,
 	}
-	return tasks, nil
+	payload, err := json.Marshal(message)
+	if err != nil {
+		return nil, errors.New("failed to marshal chat message for LLM")
+	}
+
+	// Make the HTTP POST request to the LLM
+	resp, err := http.Post(llmURL, "application/json", bytes.NewBuffer(payload))
+	if err != nil {
+		return nil, errors.New("failed to call local LLM")
+	}
+	defer resp.Body.Close()
+
+	// Check for non-200 status codes
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("local LLM returned an error: %s", resp.Status)
+	}
+
+	// Parse the response
+	var response struct {
+		ReorganizedTasks []Task `json:"reorganized_tasks"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+		return nil, errors.New("failed to parse LLM response")
+	}
+
+	return response.ReorganizedTasks, nil
 }
 
 func main() {
