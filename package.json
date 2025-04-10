@@ -1,0 +1,30 @@
+{
+  "name": "pomodoro-ai",
+  "version": "1.0.0",
+  "description": "Pomodoro App with AI features",
+  "main": "",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "serve": "vite preview"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "vite": "^6.2.6"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ElishebaW/goProjects.git"
+  },
+  "keywords": [
+    "pomodoro",
+    "ai",
+    "productivity"
+  ],
+  "author": "Elisheba Wiggins",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/ElishebaW/goProjects/issues"
+  },
+  "homepage": "https://github.com/ElishebaW/goProjects#readme"
+}
